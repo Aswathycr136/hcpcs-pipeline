@@ -1,131 +1,83 @@
-import json
-import re
-import time
+# scrape_hcpcs.py
 import requests
 from bs4 import BeautifulSoup
-from pathlib import Path
+import pandas as pd
+import time
 from urllib.parse import urljoin
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-BASE = "https://www.hcpcsdata.com"
-START_URL = f"{BASE}/Codes"
-OUTPUT_DIR = Path("../scraper_output")
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+BASE_URL = "https://www.hcpcsdata.com"
+START_URL = urljoin(BASE_URL, "/Codes")
 
-session = requests.Session()
-session.headers.update({
-    "User-Agent": "Mozilla/5.0 (HCPCS Optimized Scraper)"
-})
+# Use a realistic User-Agent to avoid 403
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/118.0.5993.90 Safari/537.36"
+}
 
 def fetch(url):
-    """Fetch a URL using persistent session."""
-    r = session.get(url, timeout=30)
-    r.raise_for_status()
-    return r.text
-
-def extract_group_code(text):
-    m = re.search(r"[A-Z]", text)
-    return m.group(0) if m else None
-
-def extract_categories(html):
-    soup = BeautifulSoup(html, "html.parser")
-    categories = []
-    for a in soup.select("a[href*='/Codes/']"):
-        href = a.get("href")
-        if href and "/Codes/" in href:
-            categories.append({
-                "name": a.get_text(strip=True),
-                "url": urljoin(BASE, href)
-            })
-    return categories
-
-def extract_codes_from_category(html, category_name):
-    soup = BeautifulSoup(html, "html.parser")
-    group_code = extract_group_code(category_name)
-
-    codes = []
-    table = soup.find("table")
-    if not table:
-        return codes
-
-    for tr in table.select("tbody tr"):
-        tds = tr.find_all("td")
-        if len(tds) < 2:
-            continue
-
-        code_tag = tds[0].find("a")
-        if not code_tag:
-            continue
-
-        codes.append({
-            "group_code": group_code,
-            "category_name": category_name,
-            "hcpcs_code": code_tag.get_text(strip=True),
-            "short_description": tds[1].get_text(strip=True),
-            "detail_url": urljoin(BASE, code_tag.get("href"))
-        })
-
-    return codes
-
-def extract_detail(item):
-    """Scrape detail page for a single code."""
+    """Fetch page content with headers."""
     try:
-        html = fetch(item["detail_url"])
-        soup = BeautifulSoup(html, "html.parser")
+        response = requests.get(url, headers=HEADERS)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP error: {e}")
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"Request error: {e}")
+        return None
 
-        h1 = soup.find("h1")
-        p = soup.find("p")
+def parse_categories(html):
+    """Parse category links from the main page."""
+    soup = BeautifulSoup(html, "html.parser")
+    category_links = []
 
-        item["long_description"] = h1.get_text(strip=True) if h1 else None
-        item["detailed_description"] = p.get_text(" ", strip=True) if p else None
+    for a in soup.select("div.codes a"):  # check actual selector on the site
+        href = a.get("href")
+        if href:
+            category_links.append(urljoin(BASE_URL, href))
+    return category_links
 
-        info = soup.find("table")
-        if info:
-            for tr in info.find_all("tr"):
-                tds = tr.find_all("td")
-                if len(tds) == 2:
-                    key = tds[0].get_text(strip=True).lower().replace(" ", "_")
-                    value = tds[1].get_text(" ", strip=True)
-                    item[key] = value
+def parse_code_page(html):
+    """Parse code data from a category page."""
+    soup = BeautifulSoup(html, "html.parser")
+    data = []
 
-    except Exception as e:
-        item["error"] = str(e)
-
-    return item
+    rows = soup.select("table tbody tr")  # check selector
+    for row in rows:
+        cols = row.find_all("td")
+        if len(cols) >= 2:
+            code = cols[0].text.strip()
+            desc = cols[1].text.strip()
+            data.append({"Code": code, "Description": desc})
+    return data
 
 def main():
     print("Fetching categories...")
     home_html = fetch(START_URL)
-    categories = extract_categories(home_html)
+    if not home_html:
+        print("Failed to fetch main page. Exiting.")
+        return
 
-    print(f"Found {len(categories)} categories")
+    categories = parse_categories(home_html)
+    print(f"Found {len(categories)} categories.")
 
-    all_codes = []
+    all_data = []
 
-    for cat in categories:
-        print(f"\nScraping category: {cat['name']}")
-        html = fetch(cat["url"])
-        codes = extract_codes_from_category(html, cat["name"])
-        all_codes.extend(codes)
-        print(f"  → {len(codes)} codes found")
-        time.sleep(0.05)
+    for idx, url in enumerate(categories, start=1):
+        print(f"[{idx}/{len(categories)}] Fetching {url}")
+        html = fetch(url)
+        if html:
+            codes = parse_code_page(html)
+            all_data.extend(codes)
+        else:
+            print(f"Failed to fetch {url}")
+        time.sleep(1)  # delay to avoid blocking
 
-    print(f"\nTotal codes: {len(all_codes)}")
-    print("Scraping detail pages in parallel...")
-
-    results = []
-    with ThreadPoolExecutor(max_workers=30) as pool:
-        tasks = [pool.submit(extract_detail, item) for item in all_codes]
-        for i, task in enumerate(as_completed(tasks), 1):
-            results.append(task.result())
-            if i % 200 == 0:
-                print(f"  → {i}/{len(all_codes)} done")
-
-    outfile = OUTPUT_DIR / "hcpcs_data_full.json"
-    json.dump(results, open(outfile, "w", encoding="utf-8"), indent=2)
-
-    print("\nSaved:", outfile)
-    print("Scraping completed.")
+    # Save to CSV
+    df = pd.DataFrame(all_data)
+    df.to_csv("hcpcs_codes.csv", index=False)
+    print(f"Saved {len(df)} codes to hcpcs_codes.csv")
 
 if __name__ == "__main__":
     main()
