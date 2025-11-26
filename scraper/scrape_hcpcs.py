@@ -16,98 +16,124 @@ HEADERS = {
 }
 
 def fetch(url, retry=3):
-    """Fetch webpage with retries."""
     for attempt in range(retry):
         try:
             r = requests.get(url, headers=HEADERS, timeout=30)
             r.raise_for_status()
             return r.text
-        except Exception as e:
-            print(f"Fetch error: {e}. Retrying...")
+        except:
             time.sleep(2)
     raise RuntimeError(f"Failed to fetch {url}")
 
+def extract_group_code(category_name):
+    m = re.search(r"[A-Z]", category_name)
+    return m.group(0) if m else None
+
 def extract_categories(html):
-    """Extract category links from the main Codes page."""
     soup = BeautifulSoup(html, "html.parser")
     categories = []
 
     for a in soup.select("a[href*='/Codes/']"):
         name = a.get_text(strip=True)
         href = a.get("href")
-
         if href and name:
-            url = urljoin(BASE, href)
-            categories.append({"name": name, "url": url})
-
+            categories.append({
+                "name": name,
+                "url": urljoin(BASE, href)
+            })
     return categories
 
-def extract_group_code(category_name):
-    """Extract the first real uppercase letter from category like `'A' Codes`."""
-    match = re.search(r"[A-Z]", category_name)
-    return match.group(0) if match else None
-
-def extract_code_table(html, category_name):
-    """Extract HCPCS code table using HTML parsing."""
+def extract_category_codes(html, category_name):
     soup = BeautifulSoup(html, "html.parser")
     rows = []
-
     group_code = extract_group_code(category_name)
 
     table = soup.find("table")
     if not table:
-        print(f"No table found for category: {category_name}")
         return rows
 
     for tr in table.select("tbody tr"):
-        cols = [td.get_text(strip=True) for td in tr.find_all("td")]
+        cols = tr.find_all("td")
+        if len(cols) < 2:
+            continue
 
-        if len(cols) >= 2:
-            code = cols[0]
-            desc = cols[1]
-            eff_date = cols[2] if len(cols) > 2 else None
-            end_date = cols[3] if len(cols) > 3 else None
+        code_link = cols[0].find("a")
+        if not code_link:
+            continue
 
-            rows.append({
-                "group_code": group_code,
-                "category_name": category_name,
-                "hcpcs_code": code,
-                "long_description": desc,
-                "effective_date": eff_date,
-                "end_date": end_date
-            })
+        code = code_link.get_text(strip=True)
+        detail_url = urljoin(BASE, code_link.get("href"))
+        desc = cols[1].get_text(strip=True)
+
+        rows.append({
+            "group_code": group_code,
+            "category_name": category_name,
+            "hcpcs_code": code,
+            "short_description": desc,
+            "detail_url": detail_url
+        })
 
     return rows
 
+def extract_detail_page(url):
+    html = fetch(url)
+    soup = BeautifulSoup(html, "html.parser")
+
+    result = {}
+
+    # Long description
+    h1 = soup.find("h1")
+    if h1:
+        result["long_description"] = h1.get_text(strip=True)
+
+    # Definition / description block
+    p = soup.find("p")
+    if p:
+        result["detailed_description"] = p.get_text(" ", strip=True)
+
+    # Extract key/value rows from detail page table
+    info_table = soup.find("table")
+    if info_table:
+        for tr in info_table.select("tr"):
+            tds = tr.find_all("td")
+            if len(tds) == 2:
+                key = tds[0].get_text(strip=True).lower().replace(" ", "_")
+                value = tds[1].get_text(" ", strip=True)
+                result[key] = value
+
+    return result
+
+
 def main():
-    print("Fetching main codes page…")
+    print("Fetching main page…")
     home_html = fetch(START_URL)
 
     print("Extracting categories…")
     categories = extract_categories(home_html)
     print(f"Found {len(categories)} categories.")
 
-    all_data = []
+    all_rows = []
 
     for cat in categories:
-        print(f"Processing category: {cat['name']}")
+        print(f"\nCategory: {cat['name']}")
+        cat_html = fetch(cat["url"])
 
-        try:
-            page_html = fetch(cat["url"])
-            items = extract_code_table(page_html, cat["name"])
-            print(f"  → Extracted {len(items)} rows")
-            all_data.extend(items)
-        except Exception as e:
-            print(f"ERROR processing {cat['name']}: {e}")
+        codes = extract_category_codes(cat_html, cat["name"])
+        print(f"  Found {len(codes)} codes")
 
-        time.sleep(1)  # Politeness
+        for item in codes:
+            print(f"    → Fetching detail: {item['hcpcs_code']}")
+            detail = extract_detail_page(item["detail_url"])
+            item.update(detail)
+            all_rows.append(item)
+            time.sleep(1)
 
-    output_file = OUTPUT_DIR / "hcpcs_data.json"
+    output_file = OUTPUT_DIR / "hcpcs_data_full.json"
     with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(all_data, f, indent=2, ensure_ascii=False)
+        json.dump(all_rows, f, indent=2, ensure_ascii=False)
 
-    print("Saved data to:", output_file)
-    print("Scraper completed successfully.")
+    print("\nSaved:", output_file)
+    print("Scraper completed.")
 
 if __name__ == "__main__":
     main()
