@@ -1,59 +1,77 @@
-import requests, time, json, sys
+import requests
 from bs4 import BeautifulSoup
-from pathlib import Path
-from urllib.parse import urljoin
+import pandas as pd
+import time
+import random
 
 BASE = "https://www.hcpcsdata.com"
-START = "https://www.hcpcsdata.com/Codes"
-OUT = Path("../scraper_output")
-OUT.mkdir(parents=True, exist_ok=True)
+START = f"{BASE}/Codes"
 
-HEADERS = {"User-Agent": "hcpcs-scraper/1.0"}
+# Strong browser headers to bypass block
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/121.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Referer": "https://www.google.com",
+    "Connection": "keep-alive",
+}
 
-def fetch(url):
-    r = requests.get(url, headers=HEADERS)
-    r.raise_for_status()
-    return r.text
+# Request function with retry + random pause
+def fetch(url, retries=5):
+    for attempt in range(retries):
+        try:
+            time.sleep(random.uniform(1.5, 3.0))  # slow down to avoid block
+            r = requests.get(url, headers=HEADERS, timeout=20)
 
-def parse_categories(html):
+            if r.status_code == 403:
+                print("403 detected → retrying with delay…")
+                time.sleep(random.uniform(4, 7))
+                continue
+
+            r.raise_for_status()
+            return r.text
+
+        except Exception as e:
+            print(f"Error fetching {url}. Attempt {attempt+1}/{retries}")
+            time.sleep(random.uniform(2, 5))
+
+    raise Exception(f"Failed after {retries} attempts → {url}")
+
+
+def extract_table(html):
     soup = BeautifulSoup(html, "html.parser")
-    links = soup.select("a[href*='/Codes/']")
-    out = []
-    for a in links:
-        url = urljoin(BASE, a.get("href"))
-        name = a.get_text(strip=True)
-        out.append({"name": name, "url": url})
-    return out
+    table = soup.find("table")
 
-def parse_codes(html, category_name):
-    soup = BeautifulSoup(html, "html.parser")
-    rows = []
-    for tr in soup.select("table tbody tr"):
-        cols = [td.get_text(strip=True) for td in tr.select("td")]
-        if len(cols) >= 2:
-            rows.append({
-                "group_code": category_name[:1],
-                "category_name": category_name,
-                "hcpcs_code": cols[0],
-                "long_description": cols[1],
-                "effective_date": cols[2] if len(cols) > 2 else None,
-                "end_date": cols[3] if len(cols) > 3 else None
-            })
-    return rows
+    if table is None:
+        raise ValueError("No table found on page")
+
+    rows = table.find_all("tr")
+    data = []
+    for row in rows:
+        cols = [c.text.strip() if c.text.strip() != "" else None for c in row.find_all("td")]
+        if cols:
+            data.append(cols)
+
+    return data
+
 
 def main():
+    print("Fetching main codes page…")
     html = fetch(START)
-    cats = parse_categories(html)
-    data = []
-    for c in cats:
-        print("Scraping:", c["name"])
-        html = fetch(c["url"])
-        data.extend(parse_codes(html, c["name"]))
-        time.sleep(1)
 
-    out_file = OUT / "hcpcs_data.json"
-    json.dump(data, out_file.open("w"), indent=2)
-    print("Saved:", out_file)
+    print("Extracting tables…")
+    data = extract_table(html)
+
+    df = pd.DataFrame(data)
+    df.columns = ["Code", "Description", "Pricing Info", "Actions"]
+
+    df.to_csv("hcpcs_data.csv", index=False)
+    print("Saved → hcpcs_data.csv")
+
 
 if __name__ == "__main__":
     main()
