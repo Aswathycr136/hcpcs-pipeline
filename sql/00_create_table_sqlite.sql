@@ -1,20 +1,14 @@
+PRAGMA foreign_keys = ON;
+
 CREATE TABLE IF NOT EXISTS hcpcs_codes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-    group_code TEXT,
-    category_name TEXT,
-    hcpcs_code TEXT,
-
-    short_description TEXT,
-    long_description TEXT,
-    detailed_description TEXT,
-
-    effective_date TEXT,
-    end_date TEXT,
-
-    action_code TEXT,
-    pricing_indicator_code TEXT,
-    status_code TEXT,
-
-    created_at TEXT DEFAULT (datetime('now'))
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_code TEXT NOT NULL,
+  category_name TEXT NOT NULL,
+  hcpcs_code TEXT NOT NULL,
+  long_description TEXT NOT NULL,
+  effective_date TEXT DEFAULT (date('now')),
+  end_date TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_hcpcs_code ON hcpcs_codes(hcpcs_code);
