@@ -1,139 +1,131 @@
-import requests
-import time
 import json
 import re
+import time
+import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
 from pathlib import Path
+from urllib.parse import urljoin
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE = "https://www.hcpcsdata.com"
 START_URL = f"{BASE}/Codes"
 OUTPUT_DIR = Path("../scraper_output")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (HCPCS Pipeline Scraper - github.com/Aswathycr136/hcpcs-pipeline)"
-}
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "Mozilla/5.0 (HCPCS Optimized Scraper)"
+})
 
-def fetch(url, retry=3):
-    for attempt in range(retry):
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=30)
-            r.raise_for_status()
-            return r.text
-        except:
-            time.sleep(2)
-    raise RuntimeError(f"Failed to fetch {url}")
+def fetch(url):
+    """Fetch a URL using persistent session."""
+    r = session.get(url, timeout=30)
+    r.raise_for_status()
+    return r.text
 
-def extract_group_code(category_name):
-    m = re.search(r"[A-Z]", category_name)
+def extract_group_code(text):
+    m = re.search(r"[A-Z]", text)
     return m.group(0) if m else None
 
 def extract_categories(html):
     soup = BeautifulSoup(html, "html.parser")
     categories = []
-
     for a in soup.select("a[href*='/Codes/']"):
-        name = a.get_text(strip=True)
         href = a.get("href")
-        if href and name:
+        if href and "/Codes/" in href:
             categories.append({
-                "name": name,
+                "name": a.get_text(strip=True),
                 "url": urljoin(BASE, href)
             })
     return categories
 
-def extract_category_codes(html, category_name):
+def extract_codes_from_category(html, category_name):
     soup = BeautifulSoup(html, "html.parser")
-    rows = []
     group_code = extract_group_code(category_name)
 
+    codes = []
     table = soup.find("table")
     if not table:
-        return rows
+        return codes
 
     for tr in table.select("tbody tr"):
-        cols = tr.find_all("td")
-        if len(cols) < 2:
+        tds = tr.find_all("td")
+        if len(tds) < 2:
             continue
 
-        code_link = cols[0].find("a")
-        if not code_link:
+        code_tag = tds[0].find("a")
+        if not code_tag:
             continue
 
-        code = code_link.get_text(strip=True)
-        detail_url = urljoin(BASE, code_link.get("href"))
-        desc = cols[1].get_text(strip=True)
-
-        rows.append({
+        codes.append({
             "group_code": group_code,
             "category_name": category_name,
-            "hcpcs_code": code,
-            "short_description": desc,
-            "detail_url": detail_url
+            "hcpcs_code": code_tag.get_text(strip=True),
+            "short_description": tds[1].get_text(strip=True),
+            "detail_url": urljoin(BASE, code_tag.get("href"))
         })
 
-    return rows
+    return codes
 
-def extract_detail_page(url):
-    html = fetch(url)
-    soup = BeautifulSoup(html, "html.parser")
+def extract_detail(item):
+    """Scrape detail page for a single code."""
+    try:
+        html = fetch(item["detail_url"])
+        soup = BeautifulSoup(html, "html.parser")
 
-    result = {}
+        h1 = soup.find("h1")
+        p = soup.find("p")
 
-    # Long description
-    h1 = soup.find("h1")
-    if h1:
-        result["long_description"] = h1.get_text(strip=True)
+        item["long_description"] = h1.get_text(strip=True) if h1 else None
+        item["detailed_description"] = p.get_text(" ", strip=True) if p else None
 
-    # Definition / description block
-    p = soup.find("p")
-    if p:
-        result["detailed_description"] = p.get_text(" ", strip=True)
+        info = soup.find("table")
+        if info:
+            for tr in info.find_all("tr"):
+                tds = tr.find_all("td")
+                if len(tds) == 2:
+                    key = tds[0].get_text(strip=True).lower().replace(" ", "_")
+                    value = tds[1].get_text(" ", strip=True)
+                    item[key] = value
 
-    # Extract key/value rows from detail page table
-    info_table = soup.find("table")
-    if info_table:
-        for tr in info_table.select("tr"):
-            tds = tr.find_all("td")
-            if len(tds) == 2:
-                key = tds[0].get_text(strip=True).lower().replace(" ", "_")
-                value = tds[1].get_text(" ", strip=True)
-                result[key] = value
+    except Exception as e:
+        item["error"] = str(e)
 
-    return result
-
+    return item
 
 def main():
-    print("Fetching main page…")
+    print("Fetching categories...")
     home_html = fetch(START_URL)
-
-    print("Extracting categories…")
     categories = extract_categories(home_html)
-    print(f"Found {len(categories)} categories.")
 
-    all_rows = []
+    print(f"Found {len(categories)} categories")
+
+    all_codes = []
 
     for cat in categories:
-        print(f"\nCategory: {cat['name']}")
-        cat_html = fetch(cat["url"])
+        print(f"\nScraping category: {cat['name']}")
+        html = fetch(cat["url"])
+        codes = extract_codes_from_category(html, cat["name"])
+        all_codes.extend(codes)
+        print(f"  → {len(codes)} codes found")
+        time.sleep(0.05)
 
-        codes = extract_category_codes(cat_html, cat["name"])
-        print(f"  Found {len(codes)} codes")
+    print(f"\nTotal codes: {len(all_codes)}")
+    print("Scraping detail pages in parallel...")
 
-        for item in codes:
-            print(f"    → Fetching detail: {item['hcpcs_code']}")
-            detail = extract_detail_page(item["detail_url"])
-            item.update(detail)
-            all_rows.append(item)
-            time.sleep(1)
+    results = []
+    with ThreadPoolExecutor(max_workers=30) as pool:
+        tasks = [pool.submit(extract_detail, item) for item in all_codes]
+        for i, task in enumerate(as_completed(tasks), 1):
+            results.append(task.result())
+            if i % 200 == 0:
+                print(f"  → {i}/{len(all_codes)} done")
 
-    output_file = OUTPUT_DIR / "hcpcs_data_full.json"
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(all_rows, f, indent=2, ensure_ascii=False)
+    outfile = OUTPUT_DIR / "hcpcs_data_full.json"
+    json.dump(results, open(outfile, "w", encoding="utf-8"), indent=2)
 
-    print("\nSaved:", output_file)
-    print("Scraper completed.")
+    print("\nSaved:", outfile)
+    print("Scraping completed.")
 
 if __name__ == "__main__":
     main()
