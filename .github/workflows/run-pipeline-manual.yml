@@ -1,4 +1,4 @@
-name: HCPCS Pipeline
+name: HCPCS Pipeline Manual
 
 on:
   workflow_dispatch:
@@ -8,14 +8,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install requirements
+        run: |
+          pip install -r requirements.txt
 
       - name: Run Scraper
         run: |
@@ -29,7 +32,7 @@ jobs:
 
       - name: Run Validator
         run: |
-          cd validator
+          cd validation
           python validate.py
 
       - name: Upload Output
@@ -38,4 +41,4 @@ jobs:
           name: hcpcs-data
           path: |
             hcpcs.db
-            scraper_output/hcpcs_data_full.json
+            scaper_output/hcpcs_data_full.json
