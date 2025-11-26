@@ -1,0 +1,49 @@
+name: Manual HCPCS Pipeline
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install scraper deps
+        working-directory: scraper
+        run: pip install -r requirements.txt
+
+      - name: Run scraper
+        working-directory: scraper
+        run: python scrape_hcpcs.py
+
+      - name: Install loader deps
+        working-directory: loader
+        run: pip install -r requirements.txt || true
+
+      - name: Load into SQLite
+        working-directory: loader
+        run: python load_to_sqlite.py
+
+      - name: Run validation
+        working-directory: validation
+        run: python validate.py
+
+      - name: Upload DB
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcpcs-db
+          path: hcpcs.db
+
+      - name: Upload JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraped-json
+          path: scraper_output/
