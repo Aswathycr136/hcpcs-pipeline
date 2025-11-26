@@ -16,11 +16,11 @@ def print_section(title, rows):
 def main():
     conn = sqlite3.connect(DB)
 
-    # 1. Counts per group
+    # 1. Write a query to count the number of codes in each group.
     rows = q(conn, "SELECT group_code, COUNT(*) FROM hcpcs_codes GROUP BY group_code")
     print_section("Counts per group:", rows)
 
-    # 2. Top 5 categories
+    # 2.  Show the top 5 categories with the highest number of codes.
     rows = q(conn, """
         SELECT category_name, COUNT(*)
         FROM hcpcs_codes
@@ -30,7 +30,7 @@ def main():
     """)
     print_section("Top 5 categories:", rows)
 
-    # 3. Codes with multiple descriptions
+    # 3. Find all codes that have changed descriptions
     rows = q(conn, """
         SELECT hcpcs_code, COUNT(DISTINCT long_description)
         FROM hcpcs_codes
@@ -39,7 +39,7 @@ def main():
     """)
     print_section("Codes with multiple descriptions:", rows)
 
-    # 4. Active in 2022 but expired before 2024
+    # 4. Shows Codes that were active in 2022 but expired before 2024
     rows = q(conn, """
         SELECT hcpcs_code, effective_date, end_date
         FROM hcpcs_codes

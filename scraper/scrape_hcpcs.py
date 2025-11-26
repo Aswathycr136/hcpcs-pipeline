@@ -43,12 +43,12 @@ def extract_categories(html):
     return categories
 
 def extract_group_code(category_name):
-    """Extract the first real uppercase letter from category like 'A' Codes."""
+    """Extract the first real uppercase letter from category like `'A' Codes`."""
     match = re.search(r"[A-Z]", category_name)
     return match.group(0) if match else None
 
 def extract_code_table(html, category_name):
-    """Extract HCPCS code table and visit detail pages."""
+    """Extract HCPCS code table using HTML parsing."""
     soup = BeautifulSoup(html, "html.parser")
     rows = []
 
@@ -60,63 +60,22 @@ def extract_code_table(html, category_name):
         return rows
 
     for tr in table.select("tbody tr"):
-        cols = tr.find_all("td")
-        if len(cols) < 1:
-            continue
+        cols = [td.get_text(strip=True) for td in tr.find_all("td")]
 
-        # Get hcpcs code and detail link
-        code_tag = cols[0].find("a")
-        if not code_tag:
-            continue
-        hcpcs_code = code_tag.get_text(strip=True)
-        detail_url = urljoin(BASE, code_tag.get("href"))
+        if len(cols) >= 2:
+            code = cols[0]
+            desc = cols[1]
+            eff_date = cols[2] if len(cols) > 2 else None
+            end_date = cols[3] if len(cols) > 3 else None
 
-        # Fetch detail page
-        try:
-            detail_html = fetch(detail_url)
-            detail_soup = BeautifulSoup(detail_html, "html.parser")
-
-            # long_description from <h1>
-            h1_tag = detail_soup.find("h1")
-            long_description = h1_tag.get_text(strip=True) if h1_tag else ""
-
-            # short_description from first <p> or table
-            p_tag = detail_soup.find("p")
-            short_description = p_tag.get_text(strip=True) if p_tag else ""
-
-            # Effective date
-            eff_date_tag = detail_soup.find(text=re.compile(r"HCPCS Action Effective Date", re.I))
-            effective_date = ""
-            if eff_date_tag:
-                parent = eff_date_tag.find_parent()
-                if parent:
-                    effective_date = parent.get_text(strip=True).replace("HCPCS Action Effective Date", "").strip()
-
-            # End date (optional)
-            end_date = None
-            end_date_tag = detail_soup.find(text=re.compile(r"End Date", re.I))
-            if end_date_tag:
-                parent = end_date_tag.find_parent()
-                if parent:
-                    end_date = parent.get_text(strip=True).replace("End Date", "").strip()
-
-            # Append row
             rows.append({
-                "id": None,  # will fill later
                 "group_code": group_code,
                 "category_name": category_name,
-                "hcpcs_code": hcpcs_code,
-                "long_description": long_description,
-                "short_description": short_description,
-                "effective_date": effective_date,
+                "hcpcs_code": code,
+                "long_description": desc,
+                "effective_date": eff_date,
                 "end_date": end_date
             })
-
-            time.sleep(0.5)  # politeness
-
-        except Exception as e:
-            print(f"  ERROR fetching detail for {hcpcs_code}: {e}")
-            continue
 
     return rows
 
@@ -142,10 +101,6 @@ def main():
             print(f"ERROR processing {cat['name']}: {e}")
 
         time.sleep(1)  # Politeness
-
-    # Assign incremental IDs
-    for i, row in enumerate(all_data, start=1):
-        row["id"] = i
 
     output_file = OUTPUT_DIR / "hcpcs_data.json"
     with open(output_file, "w", encoding="utf-8") as f:

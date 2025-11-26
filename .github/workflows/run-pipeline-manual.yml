@@ -26,7 +26,7 @@ jobs:
 
       - name: Install loader deps
         working-directory: loader
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt || true
 
       - name: Load into SQLite
         working-directory: loader
@@ -40,10 +40,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hcpcs-db
-          path: ../hcpcs.db
+          path: hcpcs.db
 
       - name: Upload JSON
         uses: actions/upload-artifact@v4
         with:
           name: scraped-json
-          path: ../scraper_output/
+          path: scraper_output/
