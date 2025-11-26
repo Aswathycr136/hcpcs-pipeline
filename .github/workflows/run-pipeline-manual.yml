@@ -18,21 +18,21 @@ jobs:
 
       - name: Install requirements
         run: |
-          pip install -r hcpcs-pipeline/requirements.txt
+          pip install -r requirements.txt
 
       - name: Run Scraper
         run: |
-          cd hcpcs-pipeline/scraper
+          cd scraper
           python scrape_hcpcs.py
 
       - name: Run Loader
         run: |
-          cd hcpcs-pipeline/loader
+          cd loader
           python load_to_sqlite.py
 
       - name: Run Validator
         run: |
-          cd hcpcs-pipeline/validation
+          cd validation
           python validate.py
 
       - name: Upload Output
@@ -40,5 +40,5 @@ jobs:
         with:
           name: hcpcs-data
           path: |
-            hcpcs-pipeline/hcpcs.db
-            hcpcs-pipeline/scaper_output/hcpcs_data_full.json
+            hcpcs.db
+            scaper_output/hcpcs_data_full.json
