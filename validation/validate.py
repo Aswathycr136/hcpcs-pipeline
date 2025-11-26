@@ -45,6 +45,7 @@ def main():
         FROM hcpcs_codes
         WHERE effective_date <= '2022-12-31'
           AND end_date IS NOT NULL
+          AND end_date >='2022-01-01'
           AND end_date < '2024-01-01';
     """)
     print_section("Active in 2022 but expired before 2024:", rows)
