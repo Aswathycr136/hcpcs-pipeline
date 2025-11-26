@@ -1,6 +1,7 @@
 import requests
 import time
 import json
+import re
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from pathlib import Path
@@ -41,10 +42,17 @@ def extract_categories(html):
 
     return categories
 
+def extract_group_code(category_name):
+    """Extract the first real uppercase letter from category like `'A' Codes`."""
+    match = re.search(r"[A-Z]", category_name)
+    return match.group(0) if match else None
+
 def extract_code_table(html, category_name):
-    """Extract HCPCS code table using HTML parsing (no pandas)."""
+    """Extract HCPCS code table using HTML parsing."""
     soup = BeautifulSoup(html, "html.parser")
     rows = []
+
+    group_code = extract_group_code(category_name)
 
     table = soup.find("table")
     if not table:
@@ -61,7 +69,7 @@ def extract_code_table(html, category_name):
             end_date = cols[3] if len(cols) > 3 else None
 
             rows.append({
-                "group_code": category_name[:1],  
+                "group_code": group_code,
                 "category_name": category_name,
                 "hcpcs_code": code,
                 "long_description": desc,
